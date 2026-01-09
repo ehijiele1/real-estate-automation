@@ -1,0 +1,7 @@
+@echo off
+REM Activate Python environment
+call "C:\Users\ehiji\OneDrive\Documents\my-crewai-project\social_content_ai\autogen_env\Scripts\activate.bat"
+REM Run main.py
+python "C:\Users\ehiji\OneDrive\Documents\my-crewai-project\social_content_ai\main.py"
+REM Deactivate environment
+deactivate

@@ -1,0 +1,45 @@
+name: Weekly Real Estate Automation
+
+on:
+  schedule:
+    # Runs every Monday at 6:00 AM UTC (7:00 AM Nigeria Time)
+    - cron: '0 6 * * 1'
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+jobs:
+  weekly-content:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        # This preserves your Excel file in data/ folder
+        persist-credentials: false
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install Dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create Environment File
+      run: |
+        echo "LIVE_POSTING=false" >> .env
+        echo "EMAIL_NOTIFICATION=true" >> .env
+        echo "EMAIL_SENDER=${{ secrets.EMAIL_SENDER }}" >> .env
+        echo "EMAIL_APP_PASSWORD=${{ secrets.EMAIL_APP_PASSWORD }}" >> .env
+        echo "EMAIL_RECIPIENT=${{ secrets.EMAIL_RECIPIENT }}" >> .env
+        echo "META_ACCESS_TOKEN=${{ secrets.META_ACCESS_TOKEN }}" >> .env
+        echo "META_PAGE_ID=${{ secrets.META_PAGE_ID }}" >> .env
+        echo "X_BEARER_TOKEN=${{ secrets.X_BEARER_TOKEN }}" >> .env
+        echo "WHATSAPP_TOKEN=${{ secrets.WHATSAPP_TOKEN }}" >> .env
+        echo "WHATSAPP_PHONE_ID=${{ secrets.WHATSAPP_PHONE_ID }}" >> .env
+    
+    - name: Run Weekly Automation
+      run: python main.py

@@ -1,0 +1,325 @@
+from dotenv import load_dotenv
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
+from pathlib import Path
+import pandas as pd
+from datetime import datetime, timedelta
+from random import choice
+import requests
+import feedparser
+
+load_dotenv()
+
+LIVE_POSTING = os.getenv("LIVE_POSTING", "false").lower() == "true"
+
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
+EMAIL_NOTIFICATION = os.getenv("EMAIL_NOTIFICATION", "true").lower() == "true"
+
+META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
+META_PAGE_ID = os.getenv("META_PAGE_ID")
+
+X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN")
+
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
+
+PROJECT_ROOT = Path(__file__).parent.resolve()
+EXCEL_PATH = PROJECT_ROOT / "data" / "Product_Information_Base.xlsx"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+PLATFORMS = ["Instagram", "Facebook", "LinkedIn", "X", "GoogleMyBusiness"]
+
+SELLING_STRATEGIES = [
+    "EMOTIONAL", "FOMO", "SOCIAL_PROOF", "AUTHORITY", "NEWS_SOLUTION", "HUMOUR"
+]
+
+UNDERUSED_CITIES = ["Abuja", "Port Harcourt", "Ibadan", "Asaba", "Uyo"]
+
+NEWS_FEED = "https://news.google.com/rss/search?q=Nigerian+real+estate+investment"
+
+# -------------------------------------------------
+# CORE LOADERS
+# -------------------------------------------------
+def load_products():
+    df = pd.read_excel(EXCEL_PATH, sheet_name="Products")
+    df.columns = df.columns.str.strip().str.lower()
+    df = df[df["content_status"].str.lower() == "active"]
+    
+    # Ensure proper dtypes for date columns
+    if "last_content_date" in df.columns:
+        df["last_content_date"] = pd.to_datetime(df["last_content_date"], errors="coerce")
+    
+    # Fill NaN values in text columns with empty string
+    text_columns = ["product_name", "location", "product_desc"]
+    for col in text_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str)
+    
+    return df
+
+
+def load_calendar():
+    try:
+        df = pd.read_excel(EXCEL_PATH, sheet_name="Content_Calendar")
+        df.columns = df.columns.str.strip().str.lower()
+        
+        # Ensure date column is datetime
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+            
+        return df
+    except Exception:
+        return pd.DataFrame(columns=[
+            "date", "post_id", "product_id", "platform",
+            "strategy", "engagement", "variant"
+        ])
+
+
+# -------------------------------------------------
+# INTELLIGENCE LAYERS
+# -------------------------------------------------
+def apply_cooldown(df, days=3):
+    today = pd.Timestamp.now().normalize()
+    
+    # Ensure last_content_date is datetime
+    if "last_content_date" not in df.columns:
+        return df
+    
+    df["last_content_date"] = pd.to_datetime(df["last_content_date"], errors="coerce")
+    
+    return df[
+        df["last_content_date"].isna() |
+        ((today - df["last_content_date"]).dt.days >= days)
+    ]
+
+
+def strategy_weights(calendar_df):
+    if calendar_df.empty:
+        return {s: 1 for s in SELLING_STRATEGIES}
+    
+    scores = calendar_df.groupby("strategy")["engagement"].sum().to_dict()
+    return {s: max(scores.get(s, 1), 1) for s in SELLING_STRATEGIES}
+
+
+def pick_strategy(product_id, calendar_df):
+    weights = strategy_weights(calendar_df)
+    pool = []
+    for k, v in weights.items():
+        pool.extend([k] * v)
+    
+    recent = calendar_df[calendar_df["product_id"] == product_id]["strategy"].tail(2).tolist()
+    filtered = [s for s in pool if s not in recent]
+    
+    return choice(filtered) if filtered else choice(pool)
+
+
+# -------------------------------------------------
+# NEWS → PRODUCT MATCHING
+# -------------------------------------------------
+def fetch_news():
+    feed = feedparser.parse(NEWS_FEED)
+    return [e.title for e in feed.entries[:5]] if feed.entries else []
+
+
+def match_news_to_product(news, product):
+    # Safely handle product_desc which might be NaN
+    product_desc = product.get("product_desc", "")
+    if pd.isna(product_desc) or not isinstance(product_desc, str):
+        return False
+    
+    keywords = product_desc.lower()
+    return any(word in keywords for word in news.lower().split())
+
+
+# -------------------------------------------------
+# CONTENT GENERATION
+# -------------------------------------------------
+def generate_image_prompt(product):
+    location = product.get("location", "Nigeria")
+    return f"High quality Nigerian real estate image, {location}, modern investment property, daylight, professional"
+
+
+def generate_content(product, platform, strategy, variant, news=None):
+    name = product.get("product_name", "Property")
+    location = product.get("location", "Nigeria")
+    price = product.get("price", "Contact for price")
+    desc = product.get("product_desc", "A premium real estate investment opportunity.")
+
+    hook = f"{name} in {location} is gaining attention."
+
+    if strategy == "FOMO":
+        hook = f"Investors are moving fast on {name} in {location}."
+    elif strategy == "SOCIAL_PROOF":
+        hook = f"{name} in {location} is one of our most requested listings."
+    elif strategy == "NEWS_SOLUTION" and news:
+        hook = f"{news} — properties like {name} in {location} benefit from this shift."
+    elif strategy == "HUMOUR":
+        hook = f"They say land doesn't run away — {name} in {location} agrees."
+
+    body = f"{hook}\n\n{desc}\n\nFrom {price}.\n\nWhatsApp +2348024427735"
+
+    if platform == "X":
+        return f"{hook} From {price}. #NigeriaRealEstate #Diaspora"
+
+    return f"{body}\n\n#NigeriaRealEstate #PropertyInvestment #DiasporaInvestors"
+
+
+# -------------------------------------------------
+# ENGAGEMENT INGESTION (META + X)
+# -------------------------------------------------
+def pull_meta_engagement(post_id):
+    return 0
+
+
+def pull_x_engagement(post_id):
+    return 0
+
+
+# -------------------------------------------------
+# WHATSAPP BROADCAST
+# -------------------------------------------------
+def send_whatsapp(message):
+    if not LIVE_POSTING:
+        return
+    
+    try:
+        requests.post(
+            f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_ID}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": EMAIL_RECIPIENT,
+                "type": "text",
+                "text": {"body": message}
+            }
+        )
+    except Exception as e:
+        print(f"WhatsApp sending failed: {e}")
+
+
+# -------------------------------------------------
+# AUTHORITY DIGEST
+# -------------------------------------------------
+def generate_authority_digest(calendar_df):
+    week = calendar_df.tail(20)
+    html = "<h1>Weekly Real Estate Authority Digest</h1>"
+    
+    for _, row in week.iterrows():
+        html += f"<h3>{row['platform']} | {row['strategy']}</h3><p>{row['post_id']}</p>"
+    
+    path = OUTPUT_DIR / f"digest_{datetime.now().date()}.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+# -------------------------------------------------
+# CITY UNDERUSE FLAGGING
+# -------------------------------------------------
+def flag_underused_cities(products_df):
+    if "location" not in products_df.columns:
+        return UNDERUSED_CITIES
+    
+    used = products_df["location"].value_counts().to_dict()
+    return [c for c in UNDERUSED_CITIES if used.get(c, 0) < 2]
+
+
+# -------------------------------------------------
+# MAIN
+# -------------------------------------------------
+def main():
+    products_df = load_products()
+    calendar_df = load_calendar()
+    news_items = fetch_news()
+
+    eligible = apply_cooldown(products_df)
+    daily_log = []
+
+    # Sample eligible products (up to 3)
+    sample_size = min(3, len(eligible))
+    if sample_size == 0:
+        print("No eligible products found.")
+        return
+    
+    for _, product in eligible.sample(sample_size).iterrows():
+        strategy = pick_strategy(product["product_id"], calendar_df)
+
+        for variant in ["A", "B"]:
+            for platform in PLATFORMS:
+                # Safely match news to product
+                matched_news = None
+                for news in news_items:
+                    if match_news_to_product(news, product):
+                        matched_news = news
+                        break
+                
+                text = generate_content(product, platform, strategy, variant, matched_news)
+
+                # Add to calendar
+                new_row = {
+                    "date": datetime.now().date(),
+                    "post_id": f"{platform}-{product['product_id']}-{variant}",
+                    "product_id": product["product_id"],
+                    "platform": platform,
+                    "strategy": strategy,
+                    "engagement": 0,
+                    "variant": variant
+                }
+                
+                calendar_df = pd.concat([calendar_df, pd.DataFrame([new_row])], ignore_index=True)
+
+                daily_log.append(f"[{platform}] {text}")
+
+        # Update product usage count - safely handle missing columns
+        if "usage_count" in products_df.columns:
+            products_df.loc[products_df["product_id"] == product["product_id"], "usage_count"] += 1
+        
+        # Update last content date with proper dtype
+        if "last_content_date" in products_df.columns:
+            products_df.loc[products_df["product_id"] == product["product_id"], "last_content_date"] = pd.Timestamp.now().normalize()
+
+    # Save to Excel
+    try:
+        with pd.ExcelWriter(EXCEL_PATH, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+            products_df.to_excel(writer, sheet_name="Products", index=False)
+            calendar_df.to_excel(writer, sheet_name="Content_Calendar", index=False)
+    except Exception as e:
+        print(f"Error saving to Excel: {e}")
+        return
+
+    # Generate digest
+    try:
+        digest = generate_authority_digest(calendar_df)
+        print(f"Digest saved to: {digest}")
+    except Exception as e:
+        print(f"Error generating digest: {e}")
+
+    # Send WhatsApp message
+    try:
+        send_whatsapp("New real estate insights just dropped. Reply YES to receive updates.")
+    except Exception as e:
+        print(f"Error sending WhatsApp: {e}")
+
+    # Send email notification
+    if EMAIL_NOTIFICATION and daily_log:
+        try:
+            msg = EmailMessage()
+            msg["From"] = EMAIL_SENDER
+            msg["To"] = EMAIL_RECIPIENT
+            msg["Subject"] = "Daily Real Estate Authority Run"
+            msg.set_content("\n\n".join(daily_log))
+            
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as server:
+                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+                server.send_message(msg)
+            print("Email notification sent.")
+        except Exception as e:
+            print(f"Error sending email: {e}")
+
+
+if __name__ == "__main__":
+    main()
