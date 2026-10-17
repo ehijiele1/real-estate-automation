@@ -534,31 +534,34 @@ def main():
     
     # Send HTML email notification
     if EMAIL_NOTIFICATION and daily_log:
-        try:
-            msg = EmailMessage()
-            msg["From"] = EMAIL_SENDER
-            msg["To"] = EMAIL_RECIPIENT
-            msg["Subject"] = f"🏠 Real Estate Daily Report - {datetime.now().strftime('%B %d, %Y')}"
-            
-            # Generate HTML content
-            html_content = generate_html_email(daily_log, products_df, calendar_df)
-            
-            # Set both plain text and HTML versions
-            plain_text = "DAILY REAL ESTATE AUTHORITY REPORT\n" + "="*50 + "\n\n"
-            for p in daily_log:
-                platform = p.split("]")[0].replace("[", "") if "]" in p else "Unknown"
-                content = p.split("] ")[1] if "] " in p else p
-                plain_text += f"--- {platform} ---\n{content}\n\n"
-            
-            msg.set_content(plain_text)
-            msg.add_alternative(html_content, subtype='html')
-            
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as server:
-                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-                server.send_message(msg)
-            print("📧 HTML email notification sent successfully")
-        except Exception as e:
-            print(f"❌ Error sending email: {e}")
+        if not EMAIL_SENDER or not EMAIL_APP_PASSWORD or not EMAIL_RECIPIENT:
+            print("⚠️ Email notification skipped: EMAIL_SENDER, EMAIL_APP_PASSWORD, or EMAIL_RECIPIENT environment variable not configured.")
+        else:
+            try:
+                msg = EmailMessage()
+                msg["From"] = EMAIL_SENDER
+                msg["To"] = EMAIL_RECIPIENT
+                msg["Subject"] = f"🏠 Real Estate Daily Report - {datetime.now().strftime('%B %d, %Y')}"
+
+                # Generate HTML content
+                html_content = generate_html_email(daily_log, products_df, calendar_df)
+
+                # Set both plain text and HTML versions
+                plain_text = "DAILY REAL ESTATE AUTHORITY REPORT\n" + "="*50 + "\n\n"
+                for p in daily_log:
+                    platform = p.split("]")[0].replace("[", "") if "]" in p else "Unknown"
+                    content = p.split("] ")[1] if "] " in p else p
+                    plain_text += f"--- {platform} ---\n{content}\n\n"
+
+                msg.set_content(plain_text)
+                msg.add_alternative(html_content, subtype='html')
+
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as server:
+                    server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+                    server.send_message(msg)
+                print("📧 HTML email notification sent successfully")
+            except Exception as e:
+                print(f"❌ Error sending email: {e} (Verify SMTP credentials and network connection)")
     
     print(f"\n✅ Automation completed at {datetime.now().strftime('%H:%M:%S')}")
     print(f"📈 Generated {len(daily_log)} posts across {len(set([p.split(']')[0].replace('[', '') for p in daily_log if ']' in p]))} platforms")
