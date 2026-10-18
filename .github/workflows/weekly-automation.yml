@@ -43,3 +43,12 @@ jobs:
     
     - name: Run Weekly Automation
       run: python main.py
+
+    - name: Upload Output Artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: automation-outputs
+        path: |
+          data/Product_Information_Base.xlsx
+          outputs/
